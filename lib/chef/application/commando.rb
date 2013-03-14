@@ -75,7 +75,7 @@ class Chef::Application::Commando < Chef::Application
     :description  => "Show chef version",
     :boolean      => true,
     :proc         => lambda {|v| puts "Chef: #{::Chef::VERSION}"},
-    :exit         => 0
+  :exit         => 0
 
   option :why_run,
     :short        => '-W',
@@ -88,6 +88,8 @@ class Chef::Application::Commando < Chef::Application
   end
 
   def reconfigure
+    parse_config_file
+    parse_json_attribs
     configure_logging
   end
 
@@ -104,14 +106,27 @@ class Chef::Application::Commando < Chef::Application
 
   def get_recipe_and_run_context
     Chef::Config[:solo] = true
+
+    cl = Chef::CookbookLoader.new(Chef::Config[:cookbook_path])
+    cl.load_cookbooks
+    cookbook_collection = Chef::CookbookCollection.new(cl)
+
     @chef_client = Chef::Client.new
     @chef_client.run_ohai
     @chef_client.load_node
     @chef_client.build_node
+
+    node = @chef_client.node
+
+    @events = Chef::EventDispatch::Dispatcher.new()
+    node.run_context = Chef::RunContext.new(node, cookbook_collection, @events)
+    node.run_list = Chef::RunList.new(@chef_client_json["run_list"].join(","))
+    node.run_context.load(node.expand!)
+
     run_context = if @chef_client.events.nil?
-                    Chef::RunContext.new(@chef_client.node, {})
+                    Chef::RunContext.new(@chef_client.node, cookbook_collection)
                   else
-                    Chef::RunContext.new(@chef_client.node, {}, @chef_client.events)
+                    Chef::RunContext.new(@chef_client.node, cookbook_collection, @chef_client.events)
                   end
     recipe = Chef::Recipe.new("(chef-apply cookbook)", "(chef-apply recipe)", run_context)
     [recipe, run_context]
@@ -160,10 +175,66 @@ class Chef::Application::Commando < Chef::Application
     end
   end
 
-    # Get this party started
+  # Get this party started
   def run
     reconfigure
     run_application
   end
 
+  private
+
+  def parse_json_attribs
+    if Chef::Config[:json_attribs]
+      begin
+        json_io = case Chef::Config[:json_attribs]
+                  when /^(http|https):\/\//
+                    @rest = Chef::REST.new(Chef::Config[:json_attribs], nil, nil)
+                    @rest.get_rest(Chef::Config[:json_attribs], true).open
+                  else
+                    open(Chef::Config[:json_attribs])
+                  end
+      rescue SocketError => error
+        Chef::Application.fatal!("I cannot connect to #{Chef::Config[:json_attribs]}", 2)
+      rescue Errno::ENOENT => error
+        Chef::Application.fatal!("I cannot find #{Chef::Config[:json_attribs]}", 2)
+      rescue Errno::EACCES => error
+        Chef::Application.fatal!("Permissions are incorrect on #{Chef::Config[:json_attribs]}. Please chmod a+r #{Chef::Config[:json_attribs]}", 2)
+      rescue Exception => error
+        Chef::Application.fatal!("Got an unexpected error reading #{Chef::Config[:json_attribs]}: #{error.message}", 2)
+      end
+
+      begin
+        @chef_client_json = Chef::JSONCompat.from_json(json_io.read)
+        json_io.close unless json_io.closed?
+      rescue JSON::ParserError => error
+        Chef::Application.fatal!("Could not parse the provided JSON file (#{Chef::Config[:json_attribs]})!: " + error.message, 2)
+      end
+    end
+  end
+
+  # Parse the configuration file
+  def parse_config_file
+    parse_options
+
+    begin
+      case config[:config_file]
+      when /^(http|https):\/\//
+        Chef::REST.new("", nil, nil).fetch(config[:config_file]) { |f| apply_config(f.path) }
+      else
+        ::File::open(config[:config_file]) { |f| apply_config(f.path) }
+      end
+    rescue Errno::ENOENT => error
+      Chef::Log.warn("*****************************************")
+      Chef::Log.warn("Did not find config file: #{config[:config_file]}, using command line options.")
+      Chef::Log.warn("*****************************************")
+
+      Chef::Config.merge!(config)
+    rescue SocketError => error
+      Chef::Application.fatal!("Error getting config file #{Chef::Config[:config_file]}", 2)
+    rescue Chef::Exceptions::ConfigurationError => error
+      Chef::Application.fatal!("Error processing config file #{Chef::Config[:config_file]} with error #{error.message}", 2)
+    rescue Exception => error
+      Chef::Application.fatal!("Unknown error processing config file #{Chef::Config[:config_file]} with error #{error.message}", 2)
+    end
+  end
 end
