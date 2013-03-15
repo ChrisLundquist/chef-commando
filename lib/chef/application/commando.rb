@@ -58,7 +58,7 @@ class Chef::Application::Commando < Chef::Application
     :short        => "-l LEVEL",
     :long         => "--log_level LEVEL",
     :description  => "Set the log level (debug, info, warn, error, fatal)",
-    :default      => :error # Don't print the run_list [] stuff, we know that.
+    :default      => :error, # Don't print the run_list [] stuff, we know that.
     :proc         => lambda { |l| l.to_sym }
 
   option :help,
