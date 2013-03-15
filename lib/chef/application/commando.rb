@@ -25,6 +25,27 @@ require 'fileutils'
 require 'tempfile'
 require 'chef/providers'
 require 'chef/resources'
+require 'chef/cookbook_version'
+
+# Chef::CookbookVersion, monkey patched to use simpler file source
+# paths (always uses local files instead of manifest records)
+class Chef::CookbookVersion
+  # Determines the absolute source filename on disk for various file
+  # resources from their relative path
+  #
+  # @param [Chef::Node] node the node object, ignored
+  # @param [Symbol] segment the segment of the current resource, ignored
+  # @param [String] filename the source file path
+  # @param [String] current_filepath the target file path, ignored
+  # @return [String] the preferred source filename
+  def preferred_filename_on_disk_location(node,
+                                          segment,
+                                          filename,
+                                          current_filepath=nil)
+    # keep absolute paths, convert relative paths into absolute paths
+    filename.start_with?('/') ? filename : File.join(Dir.getwd, filename)
+  end
+end
 
 class Chef::Application::Commando < Chef::Application
 
@@ -118,10 +139,16 @@ class Chef::Application::Commando < Chef::Application
     @chef_client.build_node
 
     node = @chef_client.node
+    cookbook_name = "(chef-apply cookbook)"
+    recipe_name = "(chef-apply recipe)"
+
+    cookbook_collection[cookbook_name] = Chef::CookbookVersion.new(cookbook_name)
+
+    run_list = @chef_client_json["run_list"].join(",")
+    node.run_list = Chef::RunList.new(run_list)
 
     @events = Chef::EventDispatch::Dispatcher.new()
     node.run_context = Chef::RunContext.new(node, cookbook_collection, @events)
-    node.run_list = Chef::RunList.new(@chef_client_json["run_list"].join(","))
     node.run_context.load(node.expand!)
 
     run_context = if @chef_client.events.nil?
@@ -129,8 +156,14 @@ class Chef::Application::Commando < Chef::Application
                   else
                     Chef::RunContext.new(@chef_client.node, cookbook_collection, @chef_client.events)
                   end
-    recipe = Chef::Recipe.new("(chef-apply cookbook)", "(chef-apply recipe)", run_context)
+    recipe = Chef::Recipe.new(cookbook_name, recipe_name, run_context)
     [recipe, run_context]
+  end
+
+  # create a cookbook collection containing a single empty cookbook
+  def single_cookbook_collection(cookbook_name)
+    cookbook = Chef::CookbookVersion.new(cookbook_name)
+    Chef::CookbookCollection.new({ cookbook_name => cookbook })
   end
 
   # write recipe to temp file, so in case of error,
