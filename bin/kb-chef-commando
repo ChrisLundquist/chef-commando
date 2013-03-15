@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Usage: kb chef-apply [<recipe_file>]
+# Summary: Runs Chef recipes from a file or stdin
+set -e
+[ -n "$KB_DEBUG" ] && set -x
+
+exec kb-ruby -S chef-commando $*
