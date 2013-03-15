@@ -1,3 +1,4 @@
+##
 I wrote this for Test-Kitchen 1.0
 
 It is an abomination of chef-apply and chef-solo.
@@ -53,3 +54,49 @@ ok 1 the log dir (/tmp/var/log/example) should be owned by our user (example)
 ok 2 should create the log dir (/tmp/var/log/example)
 ok 3 the configuration file should have the right password
 ```
+
+## Installation
+Currently you have to install it manually, but I am working to get it a first class kb plugin.
+
+Step 1) ( Please tell me a better way)
+Install the plugin Inside the vagrant
+```
+vagrant@default-ubuntu-1204:~$ sudo /opt/kb/bin/kb install chef-commando:https://github.com/ChrisLundquist/chef-commando/archive/master.tar.gz
+```
+
+Step 2)
+Make /opt/kb/libexec/kb-suite-prepare use chef-commando instead of chef-apply to get access to node recipe default attributes
+```
+#!/usr/bin/env bash
+# Usage: kb suite-prepare <plugin>
+set -e
+[ -n "$KB_DEBUG" ] && set -x
+
+banner()  { echo "-----> $*" ; }
+info()    { echo "       $*" ; }
+warn()    { echo ">>>>>> $*" >&2 ; }
+
+plugin="$1"
+prepare_script="$(kb-suitepath $plugin)/prepare.sh"
+prepare_recipe="$(kb-suitepath $plugin)/prepare_recipe.rb"
+
+if [ -x "$prepare_script" ] ; then
+  banner "Preparing $plugin suite with $prepare_script"
+  "$prepare_script"
+fi
+
+if [ -f "$prepare_recipe" ] ; then
+  banner "Preparing $plugin suite with $prepare_recipe"
+  kb chef-commando "$prepare_recipe" -c /tmp/vagrant-chef-1/solo.rb -j /tmp/vagrant-chef-1/dna.json
+fi
+```
+
+Step 3)
+Run `bundle exec kitchen verify`
+
+
+## LICENSE
+MIT
+
+## Authors
+2013 Chris Lundquist
